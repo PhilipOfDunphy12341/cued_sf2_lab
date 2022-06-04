@@ -77,10 +77,15 @@ def c_ratio_pca(X,quantised_bases):
         compressed_scheme += bpp(i)*(np.shape(i)[0])
     return (reference_scheme/compressed_scheme), compressed_scheme
 
+from skimage.metrics import structural_similarity as ssim
+def ssi(original,decoded, full):
+    ssim_image = ssim(original, decoded)
+    return ssim_image
 
-def pca_encoding(images,step,max_step,cut_off):
+def pca_encoding(images,step,max_step,cut_off,ssim = True):
     
     u,vt, percent,s = pca(images)
+    
     #percent is the amount of variance that each basis captures, qunatised in proportion to this
     vt_q = []
 
@@ -105,44 +110,90 @@ def pca_encoding(images,step,max_step,cut_off):
     vt_q_cut = np.array(vt_q)[:cut_off,:]
     # print(u_q_cut.shape,vt_q_cut.shape,smat_cut.shape)
     q_reconstructed_image = (np.dot((u_q_cut), np.dot(smat_cut, vt_q_cut)))
+    q_reconstructed_image += 128
     # reconstructed_image = (np.dot(vt.T, np.dot(smat, vt)))
     # reconstruction_error = np.std(images - reconstructed_image)
-    reconstruction_error_q = np.std(images-q_reconstructed_image)
+    if ssim == True:
+        print(np.shape(images),np.shape(q_reconstructed_image))
+        print((np.max(q_reconstructed_image)),(np.max(images)))
+        reconstruction_error_q  = ssi(images,q_reconstructed_image,full = True)
+    elif ssim == False:
+        reconstruction_error_q = np.std(images-q_reconstructed_image)
     # print(reconstruction_error)
     print("Reconstruction error: ",round(reconstruction_error_q,2)," Max quantisation level at smallest singular value: ", max_step, "No. of singular values retained: ",cut_off)
-
+    # plt.imshow(q_reconstructed_image, cmap = 'gray')
+    # plt.show()
+    # print(images[1,:100])
+    # print(q_reconstructed_image[1,:100])
+    # plt.imshow(images, cmap = 'gray')
+    # plt.show()
+    # plt.imshow(full_im, cmap = 'gray')
+    # plt.show()
     return np.array(u_q_cut),np.array(vt_q_cut),q_reconstructed_image,reconstruction_error_q
 
-def optimise_pca(image):
-    step_max = 50
+# from scipy import optimize
+# def minf(x):
+#     return x[0]**2 + (x[1]-1.)**2
+# def meta_optimise_pca():
+#     while 
+
+def optimise_pca(image,min_error,ssim = True):
+    step_max = 30
     step = 1
     epsilon = 1
     cut_off = 128
-    f_k1 = pca_encoding(image,step,step_max,cut_off)[3]
-    
-    while f_k1>3:
-        backward_step = pca_encoding(image,step,step_max-epsilon,cut_off)[3]
-        forward_step = pca_encoding(image,step,step_max+epsilon,cut_off)[3]
-        if backward_step < forward_step:
-            new_step_max = step_max - epsilon
-            f_k1 = backward_step
-        elif backward_step > forward_step:
-            new_step_max = step + epsilon
-            f_k1 = forward_step
-        step_max = new_step_max
-        
-    while 4.86>f_k1:
-        backward_step = pca_encoding(image,step,step_max,cut_off-epsilon)[3]
-        forward_step = pca_encoding(image,step,step_max,cut_off+epsilon)[3]
-        if backward_step > forward_step:
-            new_cut_off = cut_off - epsilon
-            f_k1 = backward_step
-        elif backward_step < forward_step:
-            new_cut_off = cut_off + epsilon
-            f_k1 = forward_step
+    min_ssim = ssi(image,quantise(image,17),full = True)
+    f_k1 = pca_encoding(image,step,step_max,cut_off,ssim=ssim)[3]
+    print(f_k1,min_ssim)
+    if ssim == True:
+        while f_k1<0.95:
+            print("YYYYYYYYYYY")
+            print(f_k1)
+            backward_step = pca_encoding(image,step,step_max-epsilon,cut_off,ssim=ssim)[3]
+            forward_step = pca_encoding(image,step,step_max+epsilon,cut_off,ssim=ssim)[3]
+            if backward_step > forward_step:
+                new_step_max = step_max - epsilon
+                f_k1 = backward_step
+            elif backward_step < forward_step:
+                new_step_max = step + epsilon
+                f_k1 = forward_step
+            step_max = new_step_max
+            
+        while min_ssim<f_k1:
+            backward_step = pca_encoding(image,step,step_max,cut_off-epsilon,ssim=ssim)[3]
+            forward_step = pca_encoding(image,step,step_max,cut_off+epsilon,ssim=ssim)[3]
+            if backward_step < forward_step:
+                new_cut_off = cut_off - epsilon
+                f_k1 = backward_step
+            elif backward_step > forward_step:
+                new_cut_off = cut_off + epsilon
+                f_k1 = forward_step
 
-        cut_off = int(new_cut_off)
-       
+            cut_off = int(new_cut_off)
+    else:
+        while f_k1>min_error:
+            backward_step = pca_encoding(image,step,step_max-epsilon,cut_off,ssim=ssim)[3]
+            forward_step = pca_encoding(image,step,step_max+epsilon,cut_off,ssim=ssim)[3]
+            if backward_step < forward_step:
+                new_step_max = step_max - epsilon
+                f_k1 = backward_step
+            elif backward_step > forward_step:
+                new_step_max = step + epsilon
+                f_k1 = forward_step
+            step_max = new_step_max
+            
+        while 4.86>f_k1:
+            backward_step = pca_encoding(image,step,step_max,cut_off-epsilon,ssim=ssim)[3]
+            forward_step = pca_encoding(image,step,step_max,cut_off+epsilon,ssim=ssim)[3]
+            if backward_step > forward_step:
+                new_cut_off = cut_off - epsilon
+                f_k1 = backward_step
+            elif backward_step < forward_step:
+                new_cut_off = cut_off + epsilon
+                f_k1 = forward_step
+
+            cut_off = int(new_cut_off)
+        
     return f_k1,step_max,cut_off
 
 def plot_image(x, i):
