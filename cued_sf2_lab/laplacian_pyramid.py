@@ -273,7 +273,9 @@ def bpp(x):
     if len(bins) < 2:
         # in this case there is no information, as all the values are identical
         return 0
-
+    # print("\n#############")
+    # print(bins)
+    # print("\n#############")
     h, s = np.histogram(x, bins)
 
     # Convert bin counts to probabilities, and remove zeros.

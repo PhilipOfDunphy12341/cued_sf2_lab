@@ -10,11 +10,11 @@
 from cued_sf2_lab.familiarisation import load_mat_img
 from lib import *
 
-X_pre_zero_mean, cmaps_dict = load_mat_img(img='bridge.mat', img_info='X', cmap_info={'map'})
+X_pre_zero_mean, cmaps_dict = load_mat_img(img='lighthouse.mat', img_info='X', cmap_info={'map'})
 X = X_pre_zero_mean
 
 _, new_step_max ,new_cut_off= optimise_pca(X,3,ssim = True)
-q_u,q_bases,q_reconstructed_image,reconstruction_error_q = pca_encoding(X,1,new_step_max,new_cut_off,ssim = True)
+q_u,q_bases,q_reconstructed_image,reconstruction_error_q, smat_cut,variance = pca_encoding(X,1,new_step_max,new_cut_off,ssim = True)
 print(np.shape(q_bases))
 print(np.shape(q_bases))
 # plot_all_images(q_u)
@@ -25,9 +25,8 @@ ax[0].imshow(q_reconstructed_image,cmap = 'gray')
 ax[1].imshow(quantise(X,17),cmap = 'gray')
 
 plt.show()  
-ratio, bits_encoding = c_ratio_pca(X,(q_u,q_bases))
+ratio, bits_encoding = c_ratio_pca(X,(q_u,q_bases),smat_cut)
 print("Compression ratio: ",ratio, " Bits: ", bits_encoding)
-
 #Search method is currently inefficient finding first the optimal quantisation level to some arbitrary level and then discarding principal 
 #components until the error is satisfied, upgrading to a 2D search would be better.
 
@@ -38,3 +37,6 @@ print("Compression ratio: ",ratio, " Bits: ", bits_encoding)
 #dont let the "Max quantisation level at smalest singualar value" get too small as too many PCs will need to be discarded to get a good CR
 
 #Next step is to use SSI to optimise instead
+
+# print("PHASE 2")
+# print(block_pca(X))
