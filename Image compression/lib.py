@@ -82,13 +82,13 @@ def c_ratio_pca(X,quantised_bases,s,dct_quantised_bases):
         compressed_scheme += np.log2(i)
     
     for i in dct_quantised_bases[0]:
-        compressed_scheme_dct+= dctbpp(np.reshape(i,(16,16)),8)
+        compressed_scheme_dct+= bpp(i)*(np.shape(i)[0])
     for i in dct_quantised_bases[1]:
-        compressed_scheme_dct+= dctbpp(np.reshape(i,(16,16)),8)
+        compressed_scheme_dct+= bpp(i)*(np.shape(i)[0])
     for i in s:
-        compressed_scheme += np.log2(i)
+        compressed_scheme_dct += np.log2(i)
         
-    return (reference_scheme/compressed_scheme), compressed_scheme,(reference_scheme/compressed_scheme_dct)
+    return (reference_scheme/compressed_scheme), compressed_scheme,(reference_scheme/compressed_scheme_dct),compressed_scheme_dct
 
 from skimage.metrics import structural_similarity as ssim
 def ssi(original,decoded, full):
@@ -96,27 +96,30 @@ def ssi(original,decoded, full):
     return ssim_image
 
 def pca_encoding(images,step,max_step,cut_off,ssim = True):
-    
+    N=8
     u,vt, percent,s = pca(images)
-    print(np.shape(u))
-    print(np.shape(vt))
-    C8 = dct_ii(8)
+    # print(np.shape(u))
+    # print(np.shape(vt))
+    C8 = dct_ii(N)
     #percent is the amount of variance that each basis captures, qunatised in proportion to this
     vt_q = []
     vt_q_dct = []
     scale = max_step / percent[0]
     #"Equal MSE quantising"
+    
     if np.max(vt)>np.max(u):
         max_value= np.max(vt)
     else:
         max_value = np.max(u)
+        
+        
     for i,x in enumerate(vt):
         # print(-scale*(percent[i] -percent[0])+step)
         quantise_standard = -scale*(percent[i] -percent[0])+step
         x_16 = np.reshape(x*(128/max_value),(16,16))
         
         #Now do dct on this basis function
-        y = colxfm(colxfm(x_16, C8).T, C8).T
+        y = colxfm(colxfm(x_16, C8).T, C8).T 
 
         vt_q.append(quantise(x*(128/max_value),quantise_standard))
         vt_q_dct.append((quantise(np.ravel(y),quantise_standard)))
@@ -140,7 +143,7 @@ def pca_encoding(images,step,max_step,cut_off,ssim = True):
     for i,x in enumerate(u.T):
         quantise_standard = -scale*(percent[i] -percent[0])+step
         x_16 = np.reshape(x*(128/max_value),(16,16))
-        y = colxfm(colxfm(x_16, C8).T, C8).T
+        y = colxfm(colxfm(x_16, C8).T, C8).T 
         u_q_dct.append((quantise(np.ravel(y),quantise_standard)))
 
         # fig,ax = plt.subplots(nrows = 1,ncols =2)
@@ -151,18 +154,38 @@ def pca_encoding(images,step,max_step,cut_off,ssim = True):
     dim1 = np.shape(u)[0]
     dim2 = np.shape(u)[0]
     smat = np.zeros((dim1,dim2))
+    
     smat[:dim2, :dim2] = np.diag(s)
     
     smat_cut = smat[:cut_off,:cut_off]
     
+    # print(smat_cut)
     u_q_cut = np.array(u_q)[:,:cut_off]
     vt_q_cut = np.array(vt_q)[:cut_off,:]
+    
+    
+ 
+    
     u_q_cut_dct = np.array(u_q_dct)[:cut_off,:]
     vt_q_cut_dct = np.array(vt_q_dct)[:cut_off,:]
-    print(np.shape(u_q_cut))
-    print(np.shape(vt_q_cut))
-    print(np.shape(u_q_cut_dct))
-    print(np.shape(vt_q_cut_dct))
+    
+    # minx = np.min(u_q_cut_dct, axis=None)
+    # print(minx)
+    # maxx = np.max(u_q_cut_dct, axis=None)
+    # bins = list(range(int(np.floor(minx)+1), int(np.ceil(maxx)+1)))
+    # print(maxx)
+    # print(bins)
+
+    # h, s = np.histogram(np.ravel(u_q_cut_dct), bins)
+    # # Convert bin counts to probabilities, and remove zeros.
+    # p = h / np.sum(h)
+    # p = p[p > 0]
+    # plt.plot(h)
+    # plt.show()
+    # print(np.shape(u_q_cut))
+    # print(np.shape(vt_q_cut))
+    # print(np.shape(u_q_cut_dct))
+    # print(np.shape(vt_q_cut_dct))
 
     # print(vt_q_cut[0])
     # print(vt_q_cut[0]/(128/max_value))
@@ -182,6 +205,7 @@ def pca_encoding(images,step,max_step,cut_off,ssim = True):
     # plt.show()
     # print(np.shape(u_q_cut_recovered))
     # print(np.shape(vt_q_cut_recovered))
+    
     q_reconstructed_image_dct = (np.dot((u_q_cut_recovered/(128/max_value)), np.dot(smat_cut, (vt_q_cut_recovered/(128/max_value)))))
     q_reconstructed_image_dct += 128
     # reconstructed_image = (np.dot(vt.T, np.dot(smat, vt)))
@@ -189,8 +213,8 @@ def pca_encoding(images,step,max_step,cut_off,ssim = True):
     if ssim == True:
         reconstruction_error_q  = ssi(images,q_reconstructed_image,full = True)
         reconstruction_error_q_dct  = ssi(images,q_reconstructed_image_dct,full = True)
-        print("TTTTT")
-        print(reconstruction_error_q,reconstruction_error_q_dct)
+        # print("TTTTT")
+        # print(reconstruction_error_q,reconstruction_error_q_dct)
 
     elif ssim == False:
         reconstruction_error_q = np.std(images-q_reconstructed_image)
@@ -204,13 +228,15 @@ def pca_encoding(images,step,max_step,cut_off,ssim = True):
     # plt.show()
     # plt.imshow(full_im, cmap = 'gray')
     # plt.show()
-    return np.array(u_q_cut),np.array(vt_q_cut),q_reconstructed_image,reconstruction_error_q, s[:cut_off],percent, u_q_cut_dct,vt_q_cut_dct,q_reconstructed_image_dct,reconstruction_error_q_dct
+    _,bits,_,_ = c_ratio_pca(images,(u_q_cut,vt_q_cut),s[:cut_off],(u_q_cut_dct,vt_q_cut_dct))
+    # print(bits)
+    return np.array(u_q_cut),np.array(vt_q_cut),q_reconstructed_image,reconstruction_error_q, s[:cut_off],percent, u_q_cut_dct,vt_q_cut_dct,q_reconstructed_image_dct,reconstruction_error_q_dct,bits
 
 def dctbpp(Yr, N):
-    Yq_s = Yr
+    Yr = regroup(Yr,8)
 
     total_bits = 0
-    l = int(16/N)
+    l = int(16/2)
     for i in np.arange(0,16,l):
 
         
@@ -227,14 +253,16 @@ def optimise_pca(image,min_error,ssim = True):
     epsilon = 1
     epsilon_q = 1
     cut_off = 128
-    min_ssim = ssi(image,quantise(image,17),full = True)
-    f_k1 = pca_encoding(image,step,step_max,cut_off,ssim=ssim)[9]
-    print(f_k1,min_ssim)
+    # min_ssim = ssi(image,quantise(image,17),full = True)
+    f_k1 = pca_encoding(image,step,step_max,cut_off,ssim=ssim)[10]
     if ssim == True:
         new_cut_off = cut_off
-        while f_k1<0.95:
-            backward_step = pca_encoding(image,step,step_max-epsilon_q,cut_off,ssim=ssim)[9]
-            forward_step = pca_encoding(image,step,step_max+epsilon_q,cut_off,ssim=ssim)[9]
+        while f_k1>150000:
+            print(f_k1)
+
+            backward_step = pca_encoding(image,step,step_max-epsilon_q,cut_off,ssim=ssim)[10]
+            forward_step = pca_encoding(image,step,step_max+epsilon_q,cut_off,ssim=ssim)[10]
+            print(backward_step,forward_step)
             if backward_step > forward_step:
                 new_step_max = step_max - epsilon_q
                 f_k1 = backward_step
@@ -243,9 +271,11 @@ def optimise_pca(image,min_error,ssim = True):
                 f_k1 = forward_step
             step_max = new_step_max
             
-        while min_ssim<f_k1:
-            backward_step = pca_encoding(image,step,step_max,(cut_off-epsilon),ssim=ssim)[9]
-            forward_step = pca_encoding(image,step,step_max,(cut_off+epsilon),ssim=ssim)[9]
+        while 40960<f_k1:
+            print(f_k1)
+
+            backward_step = pca_encoding(image,step,step_max,(cut_off-epsilon),ssim=ssim)[10]
+            forward_step = pca_encoding(image,step,step_max,(cut_off+epsilon),ssim=ssim)[10]
             if backward_step < forward_step:
                 new_cut_off = cut_off - epsilon
                 f_k1 = backward_step
