@@ -3,12 +3,14 @@ With thanks to 2019 SF2 Group 7 (Jason Li - jl944@cam.ac.uk, Karthik Suresh -
 ks800@cam.ac.uk), who did the bulk of the porting from matlab to Python.
 """
 from distutils.log import Log
+from lib2to3.pgen2.token import OP
 from typing import Tuple, Optional
 
 import numpy as np
 from laplacian_pyramid import quant1, quant2
 from dct import dct_ii, colxfm, regroup
 from bitword import bitword
+from dwt import dwt, idwt, nlevdwt, nlevidwt, quantdwt1, quantdwt2, dwtQuantMatrix, dwtImpulseResponse
 
 __all__ = [
     "diagscan",
@@ -738,7 +740,7 @@ def vlctest(vlc: np.ndarray) -> int:
     bitword.verify(bitwords)
     return bitwords['bits'].sum(dtype=np.intp)
 
-def NumberOfBits(JpegInfo: tuple, N: int):
+def NumberOfBitsJpeg(JpegInfo: tuple, N: int):
     dbits = sum(JpegInfo[0][:, 1])
     huffbits = 16 + max(JpegInfo[2].shape)*8
     quantbits = N**2*8
@@ -753,15 +755,15 @@ def JpegOptimiseConstStep(X: np.ndarray, InitStep: float, Increment: float, MaxE
 
         JpegInfo = jpegenc(X, qstep, N, M, True, dcbits, True)
 
-        bits = NumberOfBits(JpegInfo, N)
+        bits = NumberOfBitsJpeg(JpegInfo, N)
         err = Target - bits
 
         while err > MaxError:
             JpegInfo1 = jpegenc(X, qstep + Increment, N, M, True, dcbits, log)
             JpegInfo2 = jpegenc(X, qstep - Increment, N, M, True, dcbits, log)
 
-            bits1 = NumberOfBits(JpegInfo1, N)
-            bits2 = NumberOfBits(JpegInfo2, N)
+            bits1 = NumberOfBitsJpeg(JpegInfo1, N)
+            bits2 = NumberOfBitsJpeg(JpegInfo2, N)
 
             err1 = Target - bits1
             err2 = Target - bits2
@@ -780,3 +782,299 @@ def JpegOptimiseConstStep(X: np.ndarray, InitStep: float, Increment: float, MaxE
 
         return JpegInfo, bits, err1, qstep
 
+def dwtenc(X:np.array, levels, dwtqstep, BlockSize, log = True, huffval: Optional[np.ndarray] = None, opthuff: bool = False, dcbits: int = 8):
+
+    Y = nlevdwt(X, levels)
+    print(np.amax(Y))
+    print(np.amin(Y))
+    Yq = quantdwt1(Y, dwtqstep)[0]
+    #print(np.amax(Yq))
+    Yg = dwtgroup(Yq, levels)
+    #print(np.amax(Yg))
+        # Generate zig-zag scan of AC coefs.
+    scan = diagscan(BlockSize)
+    # On the first pass use default huffman tables.
+    if log:
+        print('Generating huffcode and ehuf using default tables')
+    dbits, dhuffval = huffdflt(1)  # Default tables.
+    huffcode, ehuf = huffgen(dbits, dhuffval)
+
+    # Generate run/ampl values and code them into vlc(:,1:2).
+    # Also generate a histogram of code symbols.
+    if log:
+        print('Coding rows')
+    sy = Yg.shape
+    huffhist = np.zeros(16 ** 2)
+    vlc = []
+    for r in range(0, sy[0], BlockSize):
+        for c in range(0, sy[1], BlockSize):
+            yg = Yg[r:r+BlockSize,c:c+BlockSize]
+
+            ygflat = yg.flatten('F')
+            ygflat = ygflat.astype(int)
+            # Encode DC coefficient first
+            dccoef = ygflat[0] + 2 ** (dcbits-1)
+            if dccoef not in range(2**dcbits):
+                raise ValueError(
+                    'DC coefficients too large for desired number of bits')
+            vlc.append(np.array([[dccoef, dcbits]]))
+            # Encode the other AC coefficients in scan order
+            # huffenc() also updates huffhist.
+            ra1 = runampl(ygflat[scan])
+            vlc.append(huffenc(huffhist, ra1, ehuf))
+    # (0, 2) array makes this work even if `vlc == []`
+    vlc = np.concatenate([np.zeros((0, 2), dtype=np.intp)] + vlc)
+
+    # Return here if the default tables are sufficient, otherwise repeat the
+    # encoding process using the custom designed huffman tables.
+    if not opthuff:
+        bits = dbits
+        huffval = dhuffval
+        if log:
+            print('Bits for coded image = {}'.format(sum(vlc[:, 1])))
+        return vlc, bits, huffval
+
+    # Design custom huffman tables.
+    if log:
+        print('Generating huffcode and ehuf using custom tables')
+    dbits, dhuffval = huffdes(huffhist)
+    huffcode, ehuf = huffgen(dbits, dhuffval)
+
+    # Generate run/ampl values and code them into vlc(:,1:2).
+    # Also generate a histogram of code symbols.
+    if log:
+        print('Coding rows (second pass)')
+    huffhist = np.zeros(16 ** 2)
+    vlc = []
+    for r in range(0, sy[0], BlockSize):
+        for c in range(0, sy[1], BlockSize):
+            yg= Yg[r:r+BlockSize, c:c+BlockSize]
+            ygflat = yg.flatten('F')
+            ygflat = ygflat.astype(int)
+            # Encode DC coefficient first
+            dccoef = ygflat[0] + 2 ** (dcbits-1)
+            vlc.append(np.array([[dccoef, dcbits]]))
+            # Encode the other AC coefficients in scan order
+            # huffenc() also updates huffhist.
+            ra1 = runampl(ygflat[scan])
+            vlc.append(huffenc(huffhist, ra1, ehuf))
+    # (0, 2) array makes this work even if `vlc == []`
+    vlc = np.concatenate([np.zeros((0, 2), dtype=np.intp)] + vlc)
+
+    if log:
+        print('Bits for coded image = {}'.format(sum(vlc[:, 1])))
+        print('Bits for huffman table = {}'.format(
+            (16 + max(dhuffval.shape))*8))
+
+    bits = dbits
+    huffval = dhuffval
+
+    return vlc, bits, huffval
+
+def dwtdec(vlc: np.ndarray, dwtqstep: float, levels: int,  BlockSize: int = 8,
+        bits: Optional[np.ndarray] = None, huffval: Optional[np.ndarray] = None,
+        dcbits: int = 8, W: int = 256, H: int = 256, log: bool = True
+        ) -> np.ndarray:
+    '''
+    Decodes a (simplified) JPEG bit stream to an image
+
+    Parameters:
+
+        vlc: variable length output code from jpegenc
+        qstep: quantisation step to use in decoding
+        N: width of the DCT block (defaults to 8)
+        BlockSize: width of each block to be coded (defaults to N). Must be an
+            integer multiple of N - if it is larger, individual blocks are
+            regrouped.
+        bits, huffval: if supplied, these will be used in Huffman decoding
+            of the data, otherwise default tables are used
+        dcbits: the number of bits to use to decode the DC coefficients
+            of the DCT
+        W, H: the size of the image (defaults to 256 x 256)
+
+    Returns:
+
+        Z: the output greyscale image
+    '''
+
+    opthuff = (huffval is not None and bits is not None)
+
+    # Set up standard scan sequence
+    scan = diagscan(BlockSize)
+
+    if opthuff:
+        if len(bits.shape) != 1:
+            raise ValueError('bits.shape must be (len(bits),)')
+        if log:
+            print('Generating huffcode and ehuf using custom tables')
+    else:
+        if log:
+            print('Generating huffcode and ehuf using default tables')
+        bits, huffval = huffdflt(1)
+
+    # Define starting addresses of each new code length in huffcode.
+    # 0-based indexing instead of 1
+    huffstart = np.cumsum(np.block([0, bits[:15]]))
+    # Set up huffman coding arrays.
+    huffcode, ehuf = huffgen(bits, huffval)
+
+    # Define array of powers of 2 from 1 to 2^16.
+    k = 2 ** np.arange(17)
+
+    # For each block in the image:
+
+    # Decode the dc coef (a fixed-length word)
+    # Look for any 15/0 code words.
+    # Choose alternate code words to be decoded (excluding 15/0 ones).
+    # and mark these with vector t until the next 0/0 EOB code is found.
+    # Decode all the t huffman codes, and the t+1 amplitude codes.
+
+    eob = ehuf[0]
+    run16 = ehuf[15 * 16]
+    i = 0
+    Zq = np.zeros((H, W))
+
+    if log:
+        print('Decoding rows')
+    for r in range(0, H, BlockSize):
+        for c in range(0, W, BlockSize):
+            yq = np.zeros(BlockSize**2)
+
+            # Decode DC coef - assume no of bits is correctly given in vlc table.
+            cf = 0
+            if vlc[i, 1] != dcbits:
+                raise ValueError(
+                    'The bits for the DC coefficient does not agree with vlc table')
+            yq[cf] = vlc[i, 0] - 2 ** (dcbits-1)
+            i += 1
+
+            # Loop for each non-zero AC coef.
+            while np.any(vlc[i] != eob):
+                run = 0
+
+                # Decode any runs of 16 zeros first.
+                while np.all(vlc[i] == run16):
+                    run += 16
+                    i += 1
+
+                # Decode run and size (in bits) of AC coef.
+                start = huffstart[vlc[i, 1] - 1]
+                res = huffval[start + vlc[i, 0] - huffcode[start]]
+                run += res // 16
+                cf += run + 1
+                si = res % 16
+                i += 1
+
+                # Decode amplitude of AC coef.
+                if vlc[i, 1] != si:
+                    raise ValueError(
+                        'Problem with decoding .. you might be using the wrong bits and huffval tables')
+                ampl = vlc[i, 0]
+
+                # Adjust ampl for negative coef (i.e. MSB = 0).
+                thr = k[si - 1]
+                yq[scan[cf-1]] = ampl - (ampl < thr) * (2 * thr - 1)
+
+                i += 1
+
+            # End-of-block detected, save block.
+            i += 1
+
+            yq = yq.reshape((BlockSize, BlockSize)).T
+
+            Zq[r:r+BlockSize, c:c+BlockSize] = yq
+
+    if log:
+        print('Inverse quantising to step size of {}'.format(dwtqstep[0][0]))
+
+    Zq = dwtgroup(Zq, -levels)
+
+    Zi = quantdwt2(Zq, dwtqstep)[0]
+
+    Z = nlevidwt(Zi, levels)
+
+    return Z
+
+def NumberOfBitsDwt(dwtInfo: tuple, N: int):
+    dbits = sum(dwtInfo[0][:, 1])
+    huffbits = 16 + max(dwtInfo[2].shape)*8
+    quantbits = N**2*8
+
+    return dbits+huffbits+quantbits
+
+def dwtOptimiseConstStep(X: np.ndarray, InitStep: float, Increment: float, MaxError: float, levels: int, Target: float = 40960, BlockSize: int = 8,
+        opthuff: bool = False, dcbits: int = 8, log: bool = True
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        qstep = InitStep
+        dwtstep = dwtQuantMatrix(qstep, levels, EqualStep = True)
+        dwtInfo = dwtenc(X, levels, dwtstep, BlockSize, dcbits = dcbits)
+        bits = NumberOfBitsDwt(dwtInfo, levels)
+        print(bits)
+        err = Target - bits
+
+        while err > MaxError:
+            dwtstep1 = dwtQuantMatrix(qstep + Increment, levels, EqualStep= True)
+            dwtInfo1 = dwtenc(X, levels, dwtstep1,  BlockSize, dcbits)
+
+            dwtstep2 = dwtQuantMatrix(qstep - Increment, levels, EqualStep= True)
+            dwtInfo2 = dwtenc(X, levels, dwtstep2,  BlockSize, dcbits)
+
+            bits1 = NumberOfBitsDwt(dwtInfo1, levels)
+            bits2 = NumberOfBitsDwt(dwtInfo2, levels)
+
+            err1 = Target - bits1
+            err2 = Target - bits2
+
+            if err1 < err and err1 < err2:
+                    err = err1
+                    qstep += Increment
+                    bits = bits1
+                    dwtInfo = dwtInfo1
+
+            elif err2 < err and err2 < err1:
+                    err = err2
+                    qstep -= Increment
+                    bits = bits2
+                    dwtInfo = dwtInfo2
+
+        return dwtInfo, bits, err, qstep
+
+def dwtOptimiseEqualMse(X: np.ndarray, InitStep: float, Increment: float, MaxError: float, levels: int, Target: float = 40960, BlockSize: int = 8,
+        opthuff: bool = False, dcbits: int = 8, log: bool = True
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        qstep = InitStep
+        energy_out = dwtImpulseResponse(levels)
+        dwtstep = dwtQuantMatrix(qstep, levels, energy_out, EqualStep = False, EqualMse=True)
+        dwtInfo = dwtenc(X, levels, dwtstep, BlockSize, dcbits = dcbits)
+        bits = NumberOfBitsDwt(dwtInfo, levels)
+        print(bits)
+        err = Target - bits
+
+        while err > MaxError:
+            dwtstep1 = dwtQuantMatrix(qstep + Increment, levels, energy_out, EqualStep= False, EqualMse=True)
+            dwtInfo1 = dwtenc(X, levels, dwtstep1,  BlockSize, dcbits)
+
+            dwtstep2 = dwtQuantMatrix(qstep - Increment, levels, energy_out, EqualStep= False, EqualMse=True)
+            dwtInfo2 = dwtenc(X, levels, dwtstep2,  BlockSize, dcbits)
+
+            bits1 = NumberOfBitsDwt(dwtInfo1, levels)
+            bits2 = NumberOfBitsDwt(dwtInfo2, levels)
+
+            err1 = Target - bits1
+            err2 = Target - bits2
+
+            if err1 < err and err1 < err2:
+                    err = err1
+                    qstep += Increment
+                    bits = bits1
+                    dwtInfo = dwtInfo1
+
+            elif err2 < err and err2 < err1:
+                    err = err2
+                    qstep -= Increment
+                    bits = bits2
+                    dwtInfo = dwtInfo2
+
+        return dwtInfo, bits, err, qstep
