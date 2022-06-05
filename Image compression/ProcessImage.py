@@ -14,7 +14,7 @@ X_pre_zero_mean, cmaps_dict = load_mat_img(img='lighthouse.mat', img_info='X', c
 X = X_pre_zero_mean
 
 _, new_step_max ,new_cut_off= optimise_pca(X,3,ssim = True)
-q_u,q_bases,q_reconstructed_image,reconstruction_error_q, smat_cut,variance = pca_encoding(X,1,new_step_max,new_cut_off,ssim = True)
+q_u,q_bases,q_reconstructed_image,reconstruction_error_q, smat_cut,variance ,q_u_dct,q_bases_dct,q_reconstructed_image_dct,reconstruction_error_q_dct= pca_encoding(X,1,new_step_max,new_cut_off,ssim = True)
 print(np.shape(q_bases))
 print(np.shape(q_bases))
 # plot_all_images(q_u)
@@ -25,8 +25,15 @@ ax[0].imshow(q_reconstructed_image,cmap = 'gray')
 ax[1].imshow(quantise(X,17),cmap = 'gray')
 
 plt.show()  
-ratio, bits_encoding = c_ratio_pca(X,(q_u,q_bases),smat_cut)
-print("Compression ratio: ",ratio, " Bits: ", bits_encoding)
+
+fig, ax = plt.subplots(nrows = 1, ncols=2)
+
+ax[0].imshow(q_reconstructed_image_dct,cmap = 'gray')
+ax[1].imshow(quantise(X,17),cmap = 'gray')
+
+plt.show()  
+ratio, bits_encoding, ratio_dct = c_ratio_pca(X,(q_u,q_bases),smat_cut,(q_u_dct,q_bases_dct))
+print("Compression ratio: ",ratio, " Bits: ", bits_encoding, " DCT: ",ratio_dct)
 #Search method is currently inefficient finding first the optimal quantisation level to some arbitrary level and then discarding principal 
 #components until the error is satisfied, upgrading to a 2D search would be better.
 
