@@ -11,11 +11,11 @@ from cued_sf2_lab.familiarisation import load_mat_img
 from lib import *
 import numpy as np
 
-X_pre_zero_mean, cmaps_dict = load_mat_img(img='lighthouse.mat', img_info='X', cmap_info={'map'})
+X_pre_zero_mean, cmaps_dict = load_mat_img(img='SF2_Competition_Image2022.mat', img_info='X', cmap_info={})
 X = X_pre_zero_mean
 
 _, new_step_max ,new_cut_off= optimise_pca(X,3,ssim = True)
-q_u,q_bases,q_reconstructed_image,reconstruction_error_q, smat_cut,variance ,q_u_dct,q_bases_dct,q_reconstructed_image_dct,reconstruction_error_q_dct,bits= pca_encoding(X,1,new_step_max,new_cut_off,ssim = True)
+q_u,q_bases,q_reconstructed_image,reconstruction_error_q, smat_cut,variance ,q_u_dct,q_bases_dct,q_reconstructed_image_dct,reconstruction_error_q_dct,bits,dct_bits= pca_encoding(X,1,new_step_max,new_cut_off,ssim = True)
 print(np.shape(q_bases))
 print(np.shape(q_bases))
 # plot_all_images(q_u)
@@ -26,7 +26,14 @@ ax[0].imshow(q_reconstructed_image,cmap = 'gray')
 ax[1].imshow(quantise(X,17),cmap = 'gray')
 ax[2].imshow(q_reconstructed_image_dct,cmap = 'gray')
 
-plt.show()  
+plt.show() 
+import cv2
+import numpy as np
+
+img = q_reconstructed_image_dct # Your image as a numpy array 
+
+cv2.imwrite("PCA-DCT_2022_2.png", img)
+
 
 
 ratio, bits_encoding, ratio_dct , compressed_scheme_dct= c_ratio_pca(X,(q_u,q_bases),smat_cut,(q_u_dct,q_bases_dct))
@@ -47,7 +54,6 @@ print("Compression ratio: ",ratio, " Bits: ", bits_encoding, " PCA/DCT ratio: ",
 
 ####  We now want to huffman encode our DCT quantised U,VT and our original S directly
 
-data_stream = np.concatenate((np.ravel(q_u),np.ravel(q_bases),smat_cut))
 
 
 print(np.shape(q_u_dct))
@@ -59,26 +65,26 @@ print(np.shape(q_bases_dct))
 # print("\n")
 # print(smat_cut)
 print("ASDASDASDASDASD")
-print(len(data_stream))
-minx = np.min(q_u, axis=None)
-maxx = np.max(q_u, axis=None)
+
+minx = np.min(q_u_dct, axis=None)
+maxx = np.max(q_u_dct, axis=None)
 # Calculate histogram of x in bins defined by bins.
 bins = list(range(int(np.floor(minx)), int(np.ceil(maxx)+1)))
 
 
-h, s = np.histogram(q_u, bins)
+h, s = np.histogram(q_u_dct, bins)
 # Convert bin counts to probabilities, and remove zeros.
 p = h / np.sum(h)
 p = p[p > 0]
 plt.plot(h)
 plt.show()
-minx = np.min(q_bases, axis=None)
-maxx = np.max(q_bases, axis=None)
+minx = np.min(q_bases_dct, axis=None)
+maxx = np.max(q_bases_dct, axis=None)
 # Calculate histogram of x in bins defined by bins.
 bins = list(range(int(np.floor(minx)), int(np.ceil(maxx)+1)))
 
 
-h, s = np.histogram(q_bases, bins)
+h, s = np.histogram(q_bases_dct, bins)
 # Convert bin counts to probabilities, and remove zeros.
 p = h / np.sum(h)
 p = p[p > 0]
@@ -96,112 +102,109 @@ p = h / np.sum(h)
 p = p[p > 0]
 plt.plot(h)
 plt.show()
-minx = np.min(data_stream, axis=None)
-maxx = np.max(data_stream, axis=None)
-# Calculate histogram of x in bins defined by bins.
-bins = list(range(int(np.floor(minx)), int(np.ceil(maxx)+1)))
 
-
-h, s = np.histogram(data_stream, bins)
-# Convert bin counts to probabilities, and remove zeros.
-p = h / np.sum(h)
-p = p[p > 0]
-plt.plot(h)
-plt.show()
-probabilities = {}
-for i in data_stream:
-    if i in probabilities:
-        probabilities[i] += 1
-    else:
-        probabilities[i] = 1
-total = np.sum(list(probabilities.values()))
-
-for i in probabilities.keys():
-    probabilities[i] = probabilities[i] /total
-# print(probabilities)
-
-def huffman(p):
-
-    xt = [[-1,[], a] for a in p]
-
-    p = [(k,p[a]) for k,a in zip(range(len(p)),p)]
-
-    nodelabel = len(p)
-
-    while len(p) > 1:
-
-        p = sorted(p,key = lambda el:el[1])
-
-        xt.append([-1,[],str(nodelabel)])
-
-        nodelabel += 1
-
-        xt[p[0][0]][0] = len(xt)-1
-        xt[p[1][0]][0] = len(xt)-1
-
-        xt[-1][1] = [p[0][0],p[1][0]]
-
-        p.append((len(xt)-1,p[0][1] + p[1][1]))
-
-        p.pop(0)
-        p.pop(0)
-
-    return(xt)
-
-def vl_encode(x, c):
-    y = []
-    for a in x:
-        y.extend(c[a])
-    return y
-
-def vl_decode(y, xt):
-    x = []
-    root = [k for k in range(len(xt)) if xt[k][0]==-1]
-    if len(root) != 1:
-        raise NameError('Tree with no or multiple roots!')
-    root = root[0]
-    leaves = [k for k in range(len(xt)) if len(xt[k][1]) == 0]
-
-    n = root
-    for k in y:
-        if len(xt[n][1]) < k:
-            raise NameError('Symbol exceeds alphabet size in tree node')
-        if xt[n][1][k] == -1:
-            raise NameError('Symbol not assigned in tree node')
-        n = xt[n][1][k]
-        if len(xt[n][1]) == 0: # it's a leaf!
-            x.append(xt[n][2])
-            n = root
-    return x
-
-
-
+data_in = [np.ravel(q_bases_dct),np.ravel(q_u_dct),np.ravel(smat_cut)]
+encoded = []
+code_books = []
 from trees import *
-xt = huffman(probabilities)
+for store in data_in:
+    probabilities = {}
+    for i in store:
+        # print(i)
+        if i in probabilities:
+            probabilities[i] += 1
+        else:
+            probabilities[i] = 1
+    total = np.sum(list(probabilities.values()))
 
-# print(xtree2newick(xt))
+    for i in probabilities.keys():
+        probabilities[i] = probabilities[i] /total
+    # print(probabilities)
 
-c = xtree2code(xt)
-hamlet_huf = vl_encode(data_stream, c)
+    def huffman(p):
+
+        xt = [[-1,[], a] for a in p]
+
+        p = [(k,p[a]) for k,a in zip(range(len(p)),p)]
+
+        nodelabel = len(p)
+
+        while len(p) > 1:
+
+            p = sorted(p,key = lambda el:el[1])
+
+            xt.append([-1,[],str(nodelabel)])
+
+            nodelabel += 1
+
+            xt[p[0][0]][0] = len(xt)-1
+            xt[p[1][0]][0] = len(xt)-1
+
+            xt[-1][1] = [p[0][0],p[1][0]]
+
+            p.append((len(xt)-1,p[0][1] + p[1][1]))
+
+            p.pop(0)
+            p.pop(0)
+
+        return(xt)
+
+    def vl_encode(x, c):
+        y = []
+        for a in x:
+            y.extend(c[a])
+        return y
+
+    def vl_decode(y, xt):
+        x = []
+        root = [k for k in range(len(xt)) if xt[k][0]==-1]
+        if len(root) != 1:
+            raise NameError('Tree with no or multiple roots!')
+        root = root[0]
+        leaves = [k for k in range(len(xt)) if len(xt[k][1]) == 0]
+
+        n = root
+        for k in y:
+            if len(xt[n][1]) < k:
+                raise NameError('Symbol exceeds alphabet size in tree node')
+            if xt[n][1][k] == -1:
+                raise NameError('Symbol not assigned in tree node')
+            n = xt[n][1][k]
+            if len(xt[n][1]) == 0: # it's a leaf!
+                x.append(xt[n][2])
+                n = root
+        return x
 
 
-print(len(hamlet_huf))
+
+    
+    xt = huffman(probabilities)
+
+    # print(xtree2newick(xt))
+
+    c = xtree2code(xt)
+    hamlet_huf = vl_encode(store, c)
+
+    code_books.append(xt)
+    print(len(hamlet_huf))
+    encoded.append(hamlet_huf)
 # print(hamlet_huf)
 
-
-
+decoded = []
+for i,encoded_store in enumerate(encoded):
 
 #To decode, we need to provide the huffman table as well as the number of bins removed so the data stream can be partitioned back into its correct 3 components
-hamlet_decoded = vl_decode(hamlet_huf, xt)
-print(len(hamlet_decoded))
-print("BBBBBBBBBB")
-print(np.sum((hamlet_decoded) - data_stream))
+    hamlet_decoded = vl_decode(encoded_store, code_books[i])
+    decoded.append(hamlet_decoded)
+    print(len(hamlet_decoded))
+    print("BBBBBBBBBB")
+    print(np.sum((hamlet_decoded) - data_in[i]))
 
 # print(hamlet_decoded)
 
-dec_q_u_dct = np.reshape(hamlet_decoded[:19200],(75,256))
-dec_vt_u_dct = np.reshape(hamlet_decoded[19200:38400],(75,256))
-dec_s = hamlet_decoded[38400:38475]
+dec_q_u_dct = np.reshape(decoded[1],(21,256))
+dec_vt_u_dct = np.reshape(decoded[0],(21,256))
+dec_s = decoded[2]
 
 
 from cued_sf2_lab.dct import dct_ii, dct_iv, colxfm, regroup
