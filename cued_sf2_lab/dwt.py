@@ -2,9 +2,9 @@
 import numpy as np
 import matplotlib as plt
 from typing import Tuple, Optional
-from laplacian_pyramid import rowdec, rowdec2, rowint, rowint2
-from laplacian_pyramid import quant1, quant2
-from laplacian_pyramid import bpp
+from .laplacian_pyramid import rowdec, rowdec2, rowint, rowint2
+from .laplacian_pyramid import quant1, quant2
+from .laplacian_pyramid import bpp
 
 __all__ = ["h1", "h2", "g1", "g2", "dwt", "idwt"]
 

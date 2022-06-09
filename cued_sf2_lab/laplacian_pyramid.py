@@ -1,8 +1,8 @@
 import scipy.io
 import numpy as np
 
-from familiarisation import plot_image
-from encoder import Encoder
+from .familiarisation import plot_image
+from .encoder import Encoder
 
 __all__ = [
     "rowdec",
